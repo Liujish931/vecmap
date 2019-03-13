@@ -47,12 +47,17 @@ def length_normalize(matrix):
     norms = xp.sqrt(xp.sum(matrix**2, axis=1))
     norms[norms == 0] = 1
     matrix /= norms[:, xp.newaxis]
+    # print('matrix sum = ', xp.sum(matrix))
 
 
 def mean_center(matrix):
     xp = get_array_module(matrix)
     avg = xp.mean(matrix, axis=0)
     matrix -= avg
+    # print(' mean center = ', xp.sum(avg), ' shape ', xp.shape(avg))
+    # print('matrix sum = ', xp.sum(matrix), ' shape ', xp.shape(matrix))
+    # print(matrix)
+    
 
 
 def length_normalize_dimensionwise(matrix):

@@ -162,7 +162,10 @@ def main():
     # Build word to index map
     src_word2ind = {word: i for i, word in enumerate(src_words)}
     trg_word2ind = {word: i for i, word in enumerate(trg_words)}
-
+    
+    print('initial x', xp.sum(x),xp.shape(x))
+    print('initial z', xp.sum(z),xp.shape(z))
+    
     # STEP 0: Normalization
     embeddings.normalize(x, args.normalize)
     embeddings.normalize(z, args.normalize)
@@ -171,6 +174,7 @@ def main():
     src_indices = []
     trg_indices = []
     if args.init_unsupervised:
+        # initialization
         sim_size = min(x.shape[0], z.shape[0]) if args.unsupervised_vocab <= 0 else min(x.shape[0], z.shape[0], args.unsupervised_vocab)
         u, s, vt = xp.linalg.svd(x[:sim_size], full_matrices=False)
         xsim = (u*s).dot(u.T)
@@ -181,10 +185,17 @@ def main():
         zsim.sort(axis=1)
         embeddings.normalize(xsim, args.normalize)
         embeddings.normalize(zsim, args.normalize)
-        sim = xsim.dot(zsim.T)
+        # similarity matrix
+        sim = xsim.dot(zsim.T)  # sim_size * sim_size
         if args.csls_neighborhood > 0:
+            # CSLS(x, y) = 2 cos(x, y) − rT(x) − rS(y).
+            # rT(x) = the average cosine similarity of x for k nearest neighbors in the target language
+
+            # source to target
             knn_sim_fwd = topk_mean(sim, k=args.csls_neighborhood)
+            # target to source
             knn_sim_bwd = topk_mean(sim.T, k=args.csls_neighborhood)
+            # 1/2 CSLS(x, y) =  cos(x, y) − rT(x)/2 − rS(y)/2 .
             sim -= knn_sim_fwd[:, xp.newaxis]/2 + knn_sim_bwd/2
         if args.direction == 'forward':
             src_indices = xp.arange(sim_size)
@@ -193,6 +204,7 @@ def main():
             src_indices = sim.argmax(axis=0)
             trg_indices = xp.arange(sim_size)
         elif args.direction == 'union':
+            # src_indices and trg_indices = sim_size*2
             src_indices = xp.concatenate((xp.arange(sim_size), sim.argmax(axis=0)))
             trg_indices = xp.concatenate((sim.argmax(axis=1), xp.arange(sim_size)))
         del xsim, zsim, sim
@@ -264,17 +276,22 @@ def main():
 
     # Training loop
     best_objective = objective = -100.
+    # iteration
     it = 1
+    # last_iteration with at least threshold improvement
     last_improvement = 0
+    # acl2018 : stochastic_initial = 0.1
     keep_prob = args.stochastic_initial
     t = time.time()
     end = not args.self_learning
     while True:
 
         # Increase the keep probability if we have not improve in args.stochastic_interval iterations
+        # acl2018 : stochastic_interval = 50
         if it - last_improvement > args.stochastic_interval:
             if keep_prob >= 1.0:
                 end = True
+            # acl2018 : stochastic_multiplier = 2
             keep_prob = min(1.0, args.stochastic_multiplier*keep_prob)
             last_improvement = it
 
@@ -284,6 +301,7 @@ def main():
             w = vt.T.dot(u.T)
             x.dot(w, out=xw)
             zw[:] = z
+            # after this, xw and zw are mapped
         elif args.unconstrained:  # unconstrained mapping
             x_pseudoinv = xp.linalg.inv(x[src_indices].T.dot(x[src_indices])).dot(x[src_indices].T)
             w = x_pseudoinv.dot(z[trg_indices])
@@ -294,10 +312,26 @@ def main():
             # TODO xw.dot(wx2, out=xw) and alike not working
             xw[:] = x
             zw[:] = z
+            
+            # print('------all words in the models------')
+            # print(np.sum(xw),np.shape(xw))
+            # print(np.sum(zw),np.shape(zw))
 
+            # print('------5000 seed words------')
+            # print(np.sum(xw[src_indices]),np.shape(xw[src_indices]))
+            # print(np.sum(zw[trg_indices]),np.shape(zw[trg_indices]))
+
+            # print('interest vector = ',xw[src_word2ind['interest']])
+            # print('interest vector sum = ', np.sum(xw[src_word2ind['interest']]))
+            
+            
             # STEP 1: Whitening
             def whitening_transformation(m):
-                u, s, vt = xp.linalg.svd(m, full_matrices=False)
+                u, s, vt = xp.linalg.svd(m, full_matrices=True)
+                # print('u', np.shape(u), np.sum(u))
+                # print('s', np.shape(s), np.sum(s))
+                # print('vt', np.shape(vt), np.sum(vt))
+                
                 return vt.T.dot(xp.diag(1/s)).dot(vt)
             if args.whiten:
                 wx1 = whitening_transformation(xw[src_indices])
@@ -305,16 +339,57 @@ def main():
                 xw = xw.dot(wx1)
                 zw = zw.dot(wz1)
 
+                # print("whitening matrix x",np.sum(wx1))
+                #print(wx1)
+                
+                # print("whitening matrix z",np.sum(wz1))
+                #print(wz1)
+
+                # print('=====whitened matrix========')
+                # print(np.sum(xw[src_indices]))
+                # print(xw[src_indices])
+                # print(np.sum(zw[trg_indices]))
+                # print(zw[trg_indices])
+
+                # print('interest vector = ',xw[src_word2ind['interest']])
+                # print(np.sum(xw[src_word2ind['interest']]))
+
             # STEP 2: Orthogonal mapping
-            wx2, s, wz2_t = xp.linalg.svd(xw[src_indices].T.dot(zw[trg_indices]))
+                        
+            wx2, s, wz2_t = xp.linalg.svd(xw[src_indices].T.dot(zw[trg_indices]),full_matrices=True)
             wz2 = wz2_t.T
+            # project the two embeddings matrices into a same space
             xw = xw.dot(wx2)
             zw = zw.dot(wz2)
 
+            # print('X^T*Z', np.sum(xw[src_indices].T.dot(zw[trg_indices])))
+            # print('wx2, u', np.sum(wx2))
+            # print('s', np.sum(s))
+            # print('wz2_t,vt', np.sum(wz2_t))
+
             # STEP 3: Re-weighting
+            
+            # print('====before re weighting====')
+            #print(xw)
+            #print(np.sum(xw))
+            
+            # print(zw)
+            # print(np.sum(zw))
+
             xw *= s**args.src_reweight
             zw *= s**args.trg_reweight
+            # nw = zw.dot(np.diag(s))
+            # print('====after re weighting====')
+            #print(xw)
+            # print(np.sum(xw))
+            
+            # print(zw)
+            # print(np.sum(zw))
 
+            #print(np.shape(s))
+            #print(nw)
+            #print(np.sum(nw))
+            
             # STEP 4: De-whitening
             if args.src_dewhiten == 'src':
                 xw = xw.dot(wx2.T.dot(xp.linalg.inv(wx1)).dot(wx2))
@@ -324,19 +399,29 @@ def main():
                 zw = zw.dot(wx2.T.dot(xp.linalg.inv(wx1)).dot(wx2))
             elif args.trg_dewhiten == 'trg':
                 zw = zw.dot(wz2.T.dot(xp.linalg.inv(wz1)).dot(wz2))
+            
+            # print('====after de-whitening====')
+            # print(np.sum(xw))
+            # print(np.sum(zw))
+
 
             # STEP 5: Dimensionality reduction
+            
             if args.dim_reduction > 0:
+                print('dimension reduction = ')
+                print(args.dim_reduction)
                 xw = xw[:, :args.dim_reduction]
                 zw = zw[:, :args.dim_reduction]
+            
 
         # Self-learning
         if end:
             break
         else:
-            # Update the training dictionary
+            # Update the training dictionary (trg_indices_forward and src_indices_backward)
             if args.direction in ('forward', 'union'):
                 if args.csls_neighborhood > 0:
+                    # simbwd.shape[0] = batch size
                     for i in range(0, trg_size, simbwd.shape[0]):
                         j = min(i + simbwd.shape[0], trg_size)
                         zw[i:j].dot(xw[:src_size].T, out=simbwd[:j-i])
@@ -376,6 +461,7 @@ def main():
                 objective = xp.mean(best_sim_backward).tolist()
             elif args.direction == 'union':
                 objective = (xp.mean(best_sim_forward) + xp.mean(best_sim_backward)).tolist() / 2
+            # threshold = 0.000001
             if objective - best_objective >= args.threshold:
                 last_improvement = it
                 best_objective = objective
@@ -414,6 +500,22 @@ def main():
     trgfile = open(args.trg_output, mode='w', encoding=args.encoding, errors='surrogateescape')
     embeddings.write(src_words, xw, srcfile)
     embeddings.write(trg_words, zw, trgfile)
+
+    #wrtie intermediate matrices for mapping
+    srcfile_wx1 = open(args.src_output + "_whitening_matrix", mode='w', encoding=args.encoding, errors='surrogateescape')
+    srcfile_wx2 = open(args.src_output + "_othogonal_mapping_u", mode='w', encoding=args.encoding,
+                       errors='surrogateescape')
+    trgfile_wz1 = open(args.trg_output + "_whitening_matrix", mode='w', encoding=args.encoding,
+                       errors='surrogateescape')
+    trgfile_wz2 = open(args.trg_output + "_othogonal_mapping_v", mode='w', encoding=args.encoding,
+                       errors='surrogateescape')
+    np.savetxt(srcfile_wx1, wx1)
+    if wx2 is not None:
+        np.savetxt(srcfile_wx2, wx2)
+    np.savetxt(trgfile_wz1, wz1)
+    if wz2 is not None:
+        np.savetxt(trgfile_wz2, wz2)
+
     srcfile.close()
     trgfile.close()
 
