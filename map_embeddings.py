@@ -280,7 +280,7 @@ def main():
     it = 1
     # last_iteration with at least threshold improvement
     last_improvement = 0
-    # acl2018 : stochastic_initial = 0.1
+    # acl2018 : stochastic_initial = 0.1 , no stochastic dict induction scenarion : stochastic_initial = 1 && stochastic_interval=1
     keep_prob = args.stochastic_initial
     t = time.time()
     end = not args.self_learning
