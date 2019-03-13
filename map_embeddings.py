@@ -480,7 +480,10 @@ def main():
                 print(file=sys.stderr)
                 print('ITERATION {0} ({1:.2f}s)'.format(it, duration), file=sys.stderr)
                 print('\t- Objective:        {0:9.4f}%'.format(100 * objective), file=sys.stderr)
+                print('\t- Best objective: {0:9.4f}%'.format(100 - 100 * best_objective), file=sys.stderr)
+                print('\t- Last iteration with improvement: {0}'.format(last_improvement), file=sys.stderr)
                 print('\t- Drop probability: {0:9.4f}%'.format(100 - 100*keep_prob), file=sys.stderr)
+
                 if args.validation is not None:
                     print('\t- Val. similarity:  {0:9.4f}%'.format(100 * similarity), file=sys.stderr)
                     print('\t- Val. accuracy:    {0:9.4f}%'.format(100 * accuracy), file=sys.stderr)
