@@ -12,10 +12,34 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+import collections
 
 from cupy_utils import *
 
 import numpy as np
+try:
+    import cupy
+except ImportError:
+    cupy = None
+
+BATCH_SIZE = 1000
+
+
+def topk_mean(m, k, inplace=False, axis=1):
+    n = m.shape[0]
+    ans = xp.zeros(n, dtype=m.dtype)
+    if k <= 0:
+        return ans
+    if not inplace:
+        m = xp.array(m)
+    ind0 = xp.arange(n)
+    ind1 = xp.empty(n, dtype=int)
+    minimum = m.min()
+    for i in range(k):
+        m.argmax(axis=axis, out=ind1)
+        ans += m[ind0, ind1]
+        m[ind0, ind1] = minimum
+    return ans / k
 
 
 def read(file, threshold=0, vocabulary=None, dtype='float'):
@@ -59,7 +83,6 @@ def mean_center(matrix):
     # print(matrix)
     
 
-
 def length_normalize_dimensionwise(matrix):
     xp = get_array_module(matrix)
     norms = xp.sqrt(xp.sum(matrix**2, axis=0))
@@ -83,3 +106,108 @@ def normalize(matrix, actions):
             length_normalize_dimensionwise(matrix)
         elif action == 'centeremb':
             mean_center_embeddingwise(matrix)
+
+
+def nearest_neighbour(word, x, id2word, word2id, topn=20, retrieval='cos'):
+
+    if type(word) == str and word not in id2word:
+        raise ValueError(word, 'is not in the vocab')
+
+    # normalize(x, ['unit', 'center', 'unit'])
+    normalize(x, ['unit'])
+
+    if type(word) == str:
+        word_id = word2id[word]
+        word_vec = x[word_id]
+    else:
+        word_vec = word
+
+    last_batch_similarities = None
+    if retrieval == 'cos':
+        for i in range(0, len(id2word), BATCH_SIZE):
+            j = min(i + BATCH_SIZE, len(id2word))
+            similarities = x[i:j].dot(word_vec.T)
+            if last_batch_similarities is not None:
+                similarities = xp.concatenate((last_batch_similarities, similarities))
+
+            last_batch_similarities = similarities
+    elif retrieval == 'csls':  # Cross-domain similarity local scaling
+        knn_sim_bwd = xp.zeros(x.shape[0])
+        for i in range(0, x.shape[0], BATCH_SIZE):
+            j = min(i + BATCH_SIZE, x.shape[0])
+            knn_sim_bwd[i:j] = topk_mean(x[i:j].dot(x.T), k=10, inplace=True, axis=1)
+            print(knn_sim_bwd[i:j].shape)
+        for i in range(0, len(id2word), BATCH_SIZE):
+            j = min(i + BATCH_SIZE, len(id2word))
+            similarities = 2*x[i:j].dot(word_vec.T) - knn_sim_bwd[i:j]  # Equivalent to the real CSLS scores for NN
+            # nn = similarities.argmax(axis=1).tolist()
+            if last_batch_similarities is not None:
+                similarities = xp.concatenate((last_batch_similarities, similarities))
+            print(similarities.shape)
+            last_batch_similarities = similarities
+
+    if type(word) == str:
+        similarities[word_id] = float("-inf")
+    l = similarities.argsort(axis=0).tolist()
+    l.reverse()
+    print(l[:topn])
+    return [(id2word[i], similarities[i]) for i in l[:topn]]
+
+
+def map_matrix(xw, wx1, wx2, s=None):
+    # whitening
+    xw = xw.dot(wx2)
+    # reweighting
+    if s is not None:
+        xw *= s ** 0.5
+    # dewhitening
+    xw = xw.dot(wx2.T.dot(xp.linalg.inv(wx1)).dot(wx2))
+    return xw
+
+
+if __name__ == '__main__':
+    # Read input embeddings
+    srcfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/original/ELMo/en.txt'
+    # srcfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/en.txt'
+
+    # wx1
+    src_whitening_matrix_filename = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/en.txt_whitening_matrix'
+    # wx2
+    src_matrix_u_filename = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/en.txt_othogonal_mapping_u'
+
+
+    # trgfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/original/ELMo/fr.txt'
+    trgfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/fr.txt'
+    srcfile = open(srcfile_name, errors='surrogateescape')
+    trgfile = open(trgfile_name, errors='surrogateescape')
+    # src_words and trg_words are word2id list
+    src_words, x = read(srcfile)
+    # trg_words, z = read(trgfile)
+
+    wx1_src = np.loadtxt(src_whitening_matrix_filename)
+    wx2_src = np.loadtxt(src_matrix_u_filename)
+
+    # NumPy/CuPy management
+    if supports_cupy():
+        xp = get_cupy()
+        x = xp.asarray(x)
+        wx1_src = xp.asarray(wx1_src)
+        wx2_src = xp.asarray(wx2_src)
+        # z = xp.asarray(z)
+    else:
+        xp = np
+
+    normalize(x, ['unit', 'center', 'unit'])
+    # normalize(x, ['unit'])
+    x = map_matrix(x, wx1_src, wx2_src)
+
+    xp.random.seed(0)
+
+    # Build word to index map
+    src_word2ind = {word: i for i, word in enumerate(src_words)}
+    # trg_word2ind = {word: i for i, word in enumerate(trg_words)}
+
+    word_vec = x[src_word2ind['wind']]
+
+    res = nearest_neighbour('wind', x, src_words, src_word2ind, retrieval='cos' )
+    print(res)

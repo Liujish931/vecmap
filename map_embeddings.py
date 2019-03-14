@@ -163,8 +163,8 @@ def main():
     src_word2ind = {word: i for i, word in enumerate(src_words)}
     trg_word2ind = {word: i for i, word in enumerate(trg_words)}
     
-    print('initial x', xp.sum(x),xp.shape(x))
-    print('initial z', xp.sum(z),xp.shape(z))
+    print('initial x', xp.sum(x), x.shape)
+    print('initial z', xp.sum(z), z.shape)
     
     # STEP 0: Normalization
     embeddings.normalize(x, args.normalize)
@@ -327,13 +327,16 @@ def main():
             
             # STEP 1: Whitening
             def whitening_transformation(m):
-                u, s, vt = xp.linalg.svd(m, full_matrices=True)
+                # u, s, vt = xp.linalg.svd(m, full_matrices=True)
+                u, s, vt = xp.linalg.svd(m, full_matrices=False)
                 # print('u', np.shape(u), np.sum(u))
                 # print('s', np.shape(s), np.sum(s))
                 # print('vt', np.shape(vt), np.sum(vt))
                 
                 return vt.T.dot(xp.diag(1/s)).dot(vt)
             if args.whiten:
+                print(src_indices)
+                print(len(src_indices))
                 wx1 = whitening_transformation(xw[src_indices])
                 wz1 = whitening_transformation(zw[trg_indices])
                 xw = xw.dot(wx1)
@@ -357,6 +360,7 @@ def main():
             # STEP 2: Orthogonal mapping
                         
             wx2, s, wz2_t = xp.linalg.svd(xw[src_indices].T.dot(zw[trg_indices]),full_matrices=True)
+            # wx2, s, wz2_t = xp.linalg.svd(xw[src_indices].T.dot(zw[trg_indices]), full_matrices=False)
             wz2 = wz2_t.T
             # project the two embeddings matrices into a same space
             xw = xw.dot(wx2)
@@ -480,7 +484,7 @@ def main():
                 print(file=sys.stderr)
                 print('ITERATION {0} ({1:.2f}s)'.format(it, duration), file=sys.stderr)
                 print('\t- Objective:        {0:9.4f}%'.format(100 * objective), file=sys.stderr)
-                print('\t- Best objective: {0:9.4f}%'.format(100 - 100 * best_objective), file=sys.stderr)
+                print('\t- Best objective: {0:9.4f}%'.format(100 * best_objective), file=sys.stderr)
                 print('\t- Last iteration with improvement: {0}'.format(last_improvement), file=sys.stderr)
                 print('\t- Drop probability: {0:9.4f}%'.format(100 - 100*keep_prob), file=sys.stderr)
 
@@ -512,6 +516,17 @@ def main():
                        errors='surrogateescape')
     trgfile_wz2 = open(args.trg_output + "_othogonal_mapping_v", mode='w', encoding=args.encoding,
                        errors='surrogateescape')
+    s_file =open(args.src_output + "_s", mode='w', encoding=args.encoding,
+                       errors='surrogateescape')
+    if supports_cupy():
+        wx1 = cupy.asnumpy(wx1)
+        wz1 = cupy.asnumpy(wz1)
+        s = cupy.asnumpy(s)
+        if wx2 is not None:
+            wx2 = cupy.asnumpy(wx2)
+        if wz2 is not None:
+            wz2 = cupy.asnumpy(wz2)
+    np.savetxt(s_file, s)
     np.savetxt(srcfile_wx1, wx1)
     if wx2 is not None:
         np.savetxt(srcfile_wx2, wx2)
