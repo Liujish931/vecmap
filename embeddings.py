@@ -154,60 +154,85 @@ def nearest_neighbour(word, x, id2word, word2id, topn=20, retrieval='cos'):
     return [(id2word[i], similarities[i]) for i in l[:topn]]
 
 
-def map_matrix(xw, wx1, wx2, s=None):
+def map_matrix(x, w1, w2, s=None):
     # whitening
-    xw = xw.dot(wx2)
+    x = x.dot(w2)
     # reweighting
     if s is not None:
-        xw *= s ** 0.5
+        x *= s ** 0.5
     # dewhitening
-    xw = xw.dot(wx2.T.dot(xp.linalg.inv(wx1)).dot(wx2))
-    return xw
+    x = x.dot(w2.T.dot(xp.linalg.inv(w1)).dot(w2))
+    return x
 
 
 if __name__ == '__main__':
+    # cloud setting
+    # DATA_PATH = '/home/ljingshu/dev/jingshu/vecamp_data/data/'
+    # dicta setting
+    DATA_PATH = 'data/'
+
     # Read input embeddings
-    srcfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/original/ELMo/en.txt'
+    srcfile_name = DATA_PATH + 'embeddings/original/ELMo/en.txt'
     # srcfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/en.txt'
 
     # wx1
-    src_whitening_matrix_filename = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/en.txt_whitening_matrix'
+    src_whitening_matrix_filename = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/en.txt_whitening_matrix'
     # wx2
-    src_matrix_u_filename = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/en.txt_othogonal_mapping_u'
+    src_matrix_u_filename = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/en.txt_othogonal_mapping_u'
 
 
-    # trgfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/original/ELMo/fr.txt'
-    trgfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/fr.txt'
+    # wz1
+    trg_whitening_matrix_filename = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/fr.txt_whitening_matrix'
+    # wz2
+    trg_matrix_v_filename = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/fr.txt_othogonal_mapping_v'
+
+    # s
+    s_matrix_filename = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/en.txt_s'
+
+    trgfile_name = DATA_PATH + 'embeddings/original/ELMo/fr.txt'
+    # trgfile_name = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/fr.txt'
+
     srcfile = open(srcfile_name, errors='surrogateescape')
     trgfile = open(trgfile_name, errors='surrogateescape')
     # src_words and trg_words are word2id list
     src_words, x = read(srcfile)
-    # trg_words, z = read(trgfile)
+    trg_words, z = read(trgfile)
 
-    wx1_src = np.loadtxt(src_whitening_matrix_filename)
-    wx2_src = np.loadtxt(src_matrix_u_filename)
+    wx1 = np.loadtxt(src_whitening_matrix_filename)
+    wx2 = np.loadtxt(src_matrix_u_filename)
+
+    wz1 = np.loadtxt(trg_whitening_matrix_filename)
+    wz2 = np.loadtxt(trg_matrix_v_filename)
+
+    s = np.loadtxt(s_matrix_filename)
 
     # NumPy/CuPy management
     if supports_cupy():
         xp = get_cupy()
         x = xp.asarray(x)
-        wx1_src = xp.asarray(wx1_src)
-        wx2_src = xp.asarray(wx2_src)
-        # z = xp.asarray(z)
+        wx1 = xp.asarray(wx1)
+        wx2 = xp.asarray(wx2)
+        wz1 = xp.asarray(wz1)
+        wz2 = xp.asarray(wz2)
+        s = xp.asarray(s)
+        z = xp.asarray(z)
     else:
         xp = np
 
-    normalize(x, ['unit', 'center', 'unit'])
-    # normalize(x, ['unit'])
-    x = map_matrix(x, wx1_src, wx2_src)
-
     xp.random.seed(0)
+
+    normalize(x, ['unit', 'center', 'unit'])
+    normalize(z, ['unit', 'center', 'unit'])
+
+    # normalize(x, ['unit'])
+    x = map_matrix(x, wx1, wx2, s=s)
+    z = map_matrix(z, wz1, wz2, s=s)
 
     # Build word to index map
     src_word2ind = {word: i for i, word in enumerate(src_words)}
-    # trg_word2ind = {word: i for i, word in enumerate(trg_words)}
+    trg_word2ind = {word: i for i, word in enumerate(trg_words)}
 
     word_vec = x[src_word2ind['wind']]
 
-    res = nearest_neighbour('wind', x, src_words, src_word2ind, retrieval='cos' )
+    res = nearest_neighbour(word_vec, z, trg_words, trg_word2ind, retrieval='cos')
     print(res)

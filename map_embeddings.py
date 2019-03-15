@@ -382,6 +382,7 @@ def main():
 
             xw *= s**args.src_reweight
             zw *= s**args.trg_reweight
+            print(s.shape)
             # nw = zw.dot(np.diag(s))
             # print('====after re weighting====')
             #print(xw)
@@ -526,7 +527,11 @@ def main():
             wx2 = cupy.asnumpy(wx2)
         if wz2 is not None:
             wz2 = cupy.asnumpy(wz2)
+    print(s.shape)
+    print(s)
+    print(s[-40:])
     np.savetxt(s_file, s)
+    np.save(s_file+'-bin', s)
     np.savetxt(srcfile_wx1, wx1)
     if wx2 is not None:
         np.savetxt(srcfile_wx2, wx2)
