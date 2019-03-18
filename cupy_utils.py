@@ -41,3 +41,11 @@ def asnumpy(x):
         return cupy.asnumpy(x)
     else:
         return numpy.asarray(x)
+
+
+def write_1d_matrix(filename, matrix):
+    with open(filename, 'w') as file:
+        m = asnumpy(matrix)
+        print(m.shape)
+        for i in range(m.shape[0]):
+            print(m[i], file=file)

@@ -532,6 +532,7 @@ def main():
     print(s[-40:])
     np.savetxt(s_file, s)
     np.save(s_file+'-bin', s)
+    write_1d_matrix(s_file+'-custom', s)
     np.savetxt(srcfile_wx1, wx1)
     if wx2 is not None:
         np.savetxt(srcfile_wx2, wx2)
