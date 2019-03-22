@@ -13,9 +13,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import collections
+import torch
 
 from cupy_utils import *
-
+from elmoformanylangs import Embedder
 import numpy as np
 try:
     import cupy
@@ -81,7 +82,8 @@ def mean_center(matrix):
     # print(' mean center = ', xp.sum(avg), ' shape ', xp.shape(avg))
     # print('matrix sum = ', xp.sum(matrix), ' shape ', xp.shape(matrix))
     # print(matrix)
-    
+    return avg
+
 
 def length_normalize_dimensionwise(matrix):
     xp = get_array_module(matrix)
@@ -97,15 +99,18 @@ def mean_center_embeddingwise(matrix):
 
 
 def normalize(matrix, actions):
+    avg = 0
     for action in actions:
         if action == 'unit':
             length_normalize(matrix)
         elif action == 'center':
-            mean_center(matrix)
+            avg = mean_center(matrix)
         elif action == 'unitdim':
             length_normalize_dimensionwise(matrix)
         elif action == 'centeremb':
             mean_center_embeddingwise(matrix)
+    if 'center' in actions:
+        return avg
 
 
 def nearest_neighbour(word, x, id2word, word2id, topn=20, retrieval='cos'):
@@ -136,14 +141,14 @@ def nearest_neighbour(word, x, id2word, word2id, topn=20, retrieval='cos'):
         for i in range(0, x.shape[0], BATCH_SIZE):
             j = min(i + BATCH_SIZE, x.shape[0])
             knn_sim_bwd[i:j] = topk_mean(x[i:j].dot(x.T), k=10, inplace=True, axis=1)
-            print(knn_sim_bwd[i:j].shape)
+            # print(knn_sim_bwd[i:j].shape)
         for i in range(0, len(id2word), BATCH_SIZE):
             j = min(i + BATCH_SIZE, len(id2word))
             similarities = 2*x[i:j].dot(word_vec.T) - knn_sim_bwd[i:j]  # Equivalent to the real CSLS scores for NN
             # nn = similarities.argmax(axis=1).tolist()
             if last_batch_similarities is not None:
                 similarities = xp.concatenate((last_batch_similarities, similarities))
-            print(similarities.shape)
+            # print(similarities.shape)
             last_batch_similarities = similarities
 
     if type(word) == str:
@@ -156,6 +161,8 @@ def nearest_neighbour(word, x, id2word, word2id, topn=20, retrieval='cos'):
 
 def map_matrix(x, w1, w2, s=None):
     # whitening
+    x = x.dot(w1)
+    # othogonal mapping
     x = x.dot(w2)
     # reweighting
     if s is not None:
@@ -168,12 +175,13 @@ def map_matrix(x, w1, w2, s=None):
 if __name__ == '__main__':
     # cloud setting
     # DATA_PATH = '/home/ljingshu/dev/jingshu/vecamp_data/data/'
+    # DATA_PATH = '/home/ubuntu/vecamp_data/data/'
     # dicta setting
     DATA_PATH = 'data/'
 
     # Read input embeddings
     srcfile_name = DATA_PATH + 'embeddings/original/ELMo/en.txt'
-    # srcfile_name = '/home/ljingshu/dev/jingshu/vecamp_data/data/embeddings/mapped/ELMo/en-fr/en.txt'
+    # srcfile_name = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/en.txt'
 
     # wx1
     src_whitening_matrix_filename = DATA_PATH + 'embeddings/mapped/ELMo/en-fr/en.txt_whitening_matrix'
@@ -206,6 +214,10 @@ if __name__ == '__main__':
 
     s = np.loadtxt(s_matrix_filename)
 
+    # Build word to index map
+    src_word2ind = {word: i for i, word in enumerate(src_words)}
+    trg_word2ind = {word: i for i, word in enumerate(trg_words)}
+
     # NumPy/CuPy management
     if supports_cupy():
         xp = get_cupy()
@@ -219,20 +231,56 @@ if __name__ == '__main__':
     else:
         xp = np
 
-    xp.random.seed(0)
+    print(x.sum())
+    print(z.sum())
 
-    normalize(x, ['unit', 'center', 'unit'])
-    normalize(z, ['unit', 'center', 'unit'])
+    print(x[src_word2ind['bank']].sum())
+
+    avg_x = normalize(x, ['unit', 'center', 'unit'])
+    avg_z = normalize(z, ['unit', 'center', 'unit'])
+
+    print('dimension wise mean of source matrix =', avg_x, avg_x.shape)
+    print('dimension wise mean of target matrix =', avg_z, avg_z.shape)
 
     # normalize(x, ['unit'])
     x = map_matrix(x, wx1, wx2, s=s)
     z = map_matrix(z, wz1, wz2, s=s)
 
-    # Build word to index map
-    src_word2ind = {word: i for i, word in enumerate(src_words)}
-    trg_word2ind = {word: i for i, word in enumerate(trg_words)}
+    print(x.sum())
+    print(z.sum())
 
     word_vec = x[src_word2ind['wind']]
-
     res = nearest_neighbour(word_vec, z, trg_words, trg_word2ind, retrieval='cos')
     print(res)
+    with torch.no_grad():
+        e = Embedder('/home/jingshu/dev/jingshu/ELMoForManyLangs/model/en', batch_size=1000)
+        e.model.eval()
+        # sents = [['He', 'went', 'to', 'the', 'bank', 'to', 'save', 'some', 'money', '.']]
+        # sents = [['In', 'geography',',', 'the', 'word', 'bank', 'generally', 'refers', 'to', 'the', 'land', 'alongside', 'a', 'body', 'of', 'water','.']]
+        sents = [['bank']]
+        # word_vec_in_context is a a numpy array
+        word_vec_in_context = e.sents2elmo(sents)[0][0]
+        print(word_vec_in_context.shape)
+        print(word_vec_in_context.sum())
+
+        # Equivalent
+        # word_vec_in_context = np.expand_dims(word_vec_in_context, axis=0)
+        word_vec_in_context = word_vec_in_context.reshape((1, word_vec_in_context.shape[0]))
+
+        print(word_vec_in_context.shape)
+
+        # unit length normalisation
+        length_normalize(word_vec_in_context)
+        # mean centering
+        word_vec_in_context -= avg_x
+        #  unit length normalisation
+        length_normalize(word_vec_in_context)
+
+        word_vec_in_context = map_matrix(word_vec_in_context, wx1, wx2, s=s)
+
+        word_vec_in_context = np.squeeze(word_vec_in_context)
+
+        res = nearest_neighbour(word_vec_in_context, z, trg_words, trg_word2ind, retrieval='cos')
+        # res = nearest_neighbour(word_vec_in_context, x, src_words, src_word2ind, retrieval='cos')
+
+        print(res)

@@ -531,8 +531,8 @@ def main():
     print(s)
     print(s[-40:])
     np.savetxt(s_file, s)
-    np.save(args.src_output+'-bin', s)
-    write_1d_matrix(args.src_output+'-custom', s)
+    np.save(args.src_output+'-s-bin', s)
+    write_1d_matrix(args.src_output+'-s-custom', s)
     np.savetxt(srcfile_wx1, wx1)
     if wx2 is not None:
         np.savetxt(srcfile_wx2, wx2)
